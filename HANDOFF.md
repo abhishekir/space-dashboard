@@ -4,7 +4,12 @@ State of the project as of **2026-09-20**. Read this once at the start of a fres
 then work from `CLAUDE.md`.
 
 The site is **built and rendering but has never been deployed, and the three data fetchers
-have never been executed.** That is the whole shape of the remaining work.
+have never run against the live APIs.** That is the whole shape of the remaining work.
+
+**2026-09-20 update.** Task 1 was attempted from a sandbox whose egress policy blocks all four
+API hosts (403 on CONNECT), so the fetchers still have not touched the real APIs. They were
+instead run against a replay of the captured responses, which found the telescope fetcher
+**fatally broken** — see *Clamp bugs found and fixed* below. Tasks 2-4 are unchanged.
 
 ---
 
@@ -38,21 +43,52 @@ A complete, building, rendering dashboard:
 | Spaceflight News API response shape | **Verified live** | v4 sample |
 | Build | **Verified** | `npm run build` clean |
 | Rendering, all tabs, both breakpoints | **Verified** | `npm run shots` passes; screenshots reviewed |
-| **`fetch-telescopes.mjs` executing** | ❌ **never run** | container network blocked all four API hosts |
-| **`fetch-starship.mjs` executing** | ❌ **never run** | same |
-| **`fetch-news.mjs` executing** | ❌ **never run** | same |
+| Horizons clamp state machine | **Verified offline** | `npm run test:horizons`, 3 window scenarios |
+| `fetch-telescopes.mjs` executing | **Verified against replayed responses** | reproduces the seed's figures digit-for-digit |
+| **`fetch-telescopes.mjs` against live Horizons** | ❌ **never run** | egress policy blocks `ssd.jpl.nasa.gov` |
+| **`fetch-starship.mjs` executing** | ❌ **never run** | egress policy blocks both LL2 hosts |
+| **`fetch-news.mjs` executing** | ❌ **never run** | egress policy blocks `api.spaceflightnewsapi.net` |
 | **GitHub Actions workflow** | ❌ **never run** | not pushed yet |
 | **Cloudflare deploy** | ❌ **never run** | project not created yet |
 
 The parsing logic was written against real captured responses and the field paths are
 confirmed, so the risk is in **execution paths** — network handling, error branches, the
-coverage-window clamp retry — not in the shape of what gets parsed.
+coverage-window clamp retry — not in the shape of what gets parsed. That judgement was right:
+the clamp retry is exactly where the breakage was.
+
+### Clamp bugs found and fixed (2026-09-20)
+
+Replaying the real captured responses through `fetch-telescopes.mjs` surfaced three defects in
+`scripts/lib/horizons.mjs`, all on the retry path, none reachable without executing it:
+
+1. **The clamp never advanced, so every telescope fetch hard-failed.** `ymd()` truncates
+   `START_TIME` to a date, so Roman's request went out as `2026-08-30` (midnight). Horizons
+   rejects that against an ephemeris starting `11:59:09` that day — but the guard asked
+   `lim >= startD` against the in-memory `12:30`, read false, and re-sent an identical request
+   until the attempt budget ran out. `fetch-telescopes.mjs` could never have completed a run.
+   Comparisons are now made against the truncated value actually sent.
+2. **Coverage was always `{null, null}`.** Coverage is only ever stated in an *error* response,
+   and the success path parsed it out of the *successful* reply. It is now carried across
+   attempts, so `coverage.notAfter` names a date as the seed always claimed it would.
+3. **`arcClamped` could never clear.** It was set by a start clamp as well as an end clamp, and
+   Roman's launch-day start clamps on every run forever — so the short-arc warning would have
+   been permanently stuck on. It now tracks the end clamp only, which is what the UI warns
+   about. This is what task 5 below depends on.
+
+Retries also went from 3 attempts to 4: Roman's real case needs exactly 3, which left no margin.
+
+`scripts/test-horizons.mjs` (`npm run test:horizons`, also a CI step) locks all three in. It
+fails against the pre-fix file, which is how each one was confirmed to be real.
 
 ---
 
 ## Task queue, in order
 
-### 1. Run the three fetchers locally — do this first
+### 1. Run the three fetchers against the live APIs — still outstanding
+**Needs a machine with egress to the four API hosts.** Two attempts have now been made from
+sandboxes where policy blocks them; if the next session is in one too, do not burn time on it —
+push and let the GitHub Actions runner do it, which is task 2 anyway.
+
 ```bash
 npm run fetch:telescopes
 LL2_DEV=1 npm run fetch:starship    # dev mirror: no rate limit, stale data
@@ -60,14 +96,23 @@ npm run fetch:news
 ```
 Then inspect each `public/data/*.json`. Specifically check:
 - `telescopes.json` — `bodies.roman.arcClamped` should be `true`, and `coverage.notAfter`
-  should name a date. This exercises the coverage-window retry, the most intricate code in the
-  repo. If `arc` is short or empty, the clamp logic needs work.
-- `bodies.jwst.arc` should have ~78 points and trace a closed loop.
+  should name a date. **Both now hold under replay**, so a failure here means live Horizons
+  differs from the captured responses, not that the clamp is broken again.
+- `bodies.jwst.arc` should have ~78 points and trace a closed loop. **Unverified** — the seed
+  is a 10-day grid covering only Mar-Dec 2026, so replay yields 30 points and an open arc.
+  This check still needs live data.
 - `starship.json` — `next` should be a real upcoming flight. Re-run **without** `LL2_DEV=1`
-  once to confirm the production endpoint and rate-limit handling.
+  once to confirm the production endpoint and rate-limit handling. Neither fetcher has been
+  executed in any form; unlike the telescope path they have no retry state machine, so the
+  exposure is network and error branches only.
 - `news.json` — the seed has empty feeds; all three should populate.
 
 Then `npm run build && npm run shots` to confirm real data renders as well as seed data.
+
+One known cosmetic risk: `coverage.notAfter` is normalised to the seed's `2026-Oct-12 12:58:00`
+form by `tidy()` in `horizons.mjs`. If live Horizons words its error differently the regex
+falls through to `null` and the Roman note degrades to "see Horizons" — not a failure, but
+check the note reads correctly.
 
 ### 2. Deploy
 Follow `README.md` § Setup. Needs: a GitHub repo, `npx wrangler pages project create` as
@@ -98,7 +143,9 @@ Roman arrives at L2 around **late November 2026**. When it does:
 That logic is written but **has never run against arrival-phase data**. Worth forcing a test by
 temporarily raising the threshold and confirming the UI switches cleanly. Also: once Roman is
 station-keeping, its Horizons arc should stop being short-arc-clamped, and the warning note
-should disappear on its own — verify it does.
+should disappear on its own — verify it does. (Before 2026-09-20 it could not have: the start
+clamp kept `arcClamped` true forever. Fixed, and covered by the `romanArrived` case in
+`npm run test:horizons`.)
 
 ---
 

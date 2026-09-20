@@ -19,6 +19,7 @@ npm run shots -- --dev # same, against the running dev server
 npm run smoke <url>    # smoke-test a deployed URL
 npm run fetch:all      # refresh all three data snapshots
 npm run seed           # regenerate the committed seed snapshot
+npm run test:horizons  # offline test of the Horizons coverage-window clamp
 ```
 
 `npm run shots` needs `npx playwright install chromium` once.
@@ -71,6 +72,14 @@ Do not undo these without a deliberate reason. Each exists because the alternati
   markers. `scripts/lib/horizons.mjs` parses the window out of that error and retries inside it.
   Keep that behaviour — without it the telescope fetcher hard-fails on a schedule.
 - Data is fenced between `$$SOE` and `$$EOE`. Absence of those markers *is* the error signal.
+- **`START_TIME`/`STOP_TIME` go out as dates, so Horizons judges the window at midnight.** A
+  `Date` of `2026-08-30T12:30Z` is inside Roman's coverage; the `2026-08-30` that `ymd()`
+  actually sends is not. Every clamp comparison must be made against the truncated value, not
+  the in-memory `Date` — getting this wrong makes the retry re-send an identical request and
+  the fetcher fails every run. `npm run test:horizons` guards it.
+- Coverage bounds appear **only in error responses**. The successful reply that ends the retry
+  loop says nothing about the window, so carry the bounds across attempts or they come back
+  null.
 
 **Three.js**
 - `THREE.Line` ignores `linewidth` on nearly every platform (ANGLE/D3D clamps to 1px).

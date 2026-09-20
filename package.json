@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "seed": "node scripts/make-seed.mjs",
+    "test:horizons": "node scripts/test-horizons.mjs",
     "fetch:telescopes": "node scripts/fetch-telescopes.mjs",
     "fetch:starship": "node scripts/fetch-starship.mjs",
     "fetch:news": "node scripts/fetch-news.mjs",

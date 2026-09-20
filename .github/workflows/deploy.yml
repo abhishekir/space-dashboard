@@ -41,6 +41,12 @@ jobs:
 
       - run: npm ci
 
+      # Offline guard on the Horizons coverage-window clamp. It needs no network,
+      # runs in under a second, and fails the job before a deploy can go out with
+      # a telescope fetcher that cannot complete a single request.
+      - name: Test Horizons clamp logic
+        run: npm run test:horizons
+
       # Each fetcher is allowed to fail without sinking the deploy: if Horizons
       # is down we still want the site up with the last-good seeded data rather
       # than no site at all. `continue-on-error` + a summary step makes a partial

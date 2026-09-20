@@ -56,9 +56,21 @@ function parseCoverageError(text) {
   const before = text.match(/prior to A\.D\.\s+([0-9]{4}-[A-Z]{3}-[0-9]{2}\s+[0-9:.]+)/i);
   const after = text.match(/after A\.D\.\s+([0-9]{4}-[A-Z]{3}-[0-9]{2}\s+[0-9:.]+)/i);
   return {
-    notBefore: before ? before[1] : null,
-    notAfter: after ? after[1] : null,
+    notBefore: before ? tidy(before[1]) : null,
+    notAfter: after ? tidy(after[1]) : null,
   };
+}
+
+/**
+ * Horizons shouts its months and carries 4 fractional-second digits
+ * ("2026-OCT-12 12:58:00.0000"). These strings are rendered straight into prose
+ * on the Roman panel, so drop the fraction and title-case the month to match the
+ * form scripts/make-seed.mjs stores. Nothing below minute resolution is shown.
+ */
+function tidy(s) {
+  return s
+    .replace(/\.[0-9]+$/, '')
+    .replace(/-([A-Z]{3})-/, (_, m) => `-${m[0]}${m.slice(1).toLowerCase()}-`);
 }
 
 const MONTHS = {
@@ -93,18 +105,29 @@ async function rawQuery(params) {
  * @param {boolean} opts.clamp Retry inside the reported coverage window on a range error.
  * @returns {Promise<{points: Array<{t: string, x: number, y: number, z: number}>,
  *                    coverage: {notBefore: string|null, notAfter: string|null},
- *                    clamped: boolean}>}
+ *                    clamped: boolean, clampedStart: boolean, clampedEnd: boolean}>}
  */
 export async function vectors(command, { start, stop, step = '1d', clamp = true } = {}) {
   let startD = new Date(start);
   let stopD = new Date(stop);
-  let clamped = false;
+  let clampedStart = false;
+  let clampedEnd = false;
+  // Coverage is only ever stated in an ERROR response. The successful reply that
+  // ends this loop says nothing about the window, so carry it across attempts —
+  // reading it off the success text yields nulls.
+  const coverage = { notBefore: null, notAfter: null };
+  let lastError = '';
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    // What actually goes on the wire. ymd() truncates to midnight, and every
+    // comparison below has to be made against these, not against startD/stopD.
+    const sentStart = ymd(startD);
+    const sentStop = ymd(stopD);
+
     const text = await rawQuery({
       COMMAND: command,
-      START_TIME: ymd(startD),
-      STOP_TIME: ymd(stopD),
+      START_TIME: sentStart,
+      STOP_TIME: sentStop,
       STEP_SIZE: step,
     });
 
@@ -132,7 +155,10 @@ export async function vectors(command, { start, stop, step = '1d', clamp = true 
         .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));
 
       if (!points.length) throw new Error(`Horizons returned an empty table for ${command}`);
-      return { points, coverage: parseCoverageError(text), clamped };
+      // `clamped` means the END was pulled in — that is what the UI warns about.
+      // A start clamp is routine for any post-launch spacecraft and is not a
+      // short-arc signal, so it must not raise the warning on its own.
+      return { points, coverage, clamped: clampedEnd, clampedStart, clampedEnd };
     }
 
     // No data markers => range/coverage error. Try to recover.
@@ -141,27 +167,45 @@ export async function vectors(command, { start, stop, step = '1d', clamp = true 
       const snippet = text.replace(/\s+/g, ' ').slice(0, 300);
       throw new Error(`Horizons returned no ephemeris for ${command}: ${snippet}`);
     }
+    lastError = text.replace(/\s+/g, ' ').slice(0, 300);
+    if (cov.notBefore) coverage.notBefore = cov.notBefore;
+    if (cov.notAfter) coverage.notAfter = cov.notAfter;
+
+    const prevStart = startD.getTime();
+    const prevStop = stopD.getTime();
 
     if (cov.notBefore) {
       const lim = parseHorizonsDate(cov.notBefore);
-      // +1 day so the first sample is safely inside the window
-      if (lim && lim >= startD) {
+      // Compare against the truncated value we sent: startD may sit inside the
+      // window (12:30) while the date we sent (00:00) does not, which is exactly
+      // the case for Roman, whose ephemeris begins 11:59:09 on its launch day.
+      // +1 day so the first sample is safely inside the window.
+      if (lim && lim >= new Date(`${sentStart}T00:00:00Z`)) {
         startD = new Date(lim.getTime() + 86400000);
-        clamped = true;
+        clampedStart = true;
       }
     }
     if (cov.notAfter) {
       const lim = parseHorizonsDate(cov.notAfter);
-      if (lim && lim <= stopD) {
+      if (lim && lim <= new Date(`${sentStop}T00:00:00Z`)) {
         stopD = new Date(lim.getTime() - 86400000);
-        clamped = true;
+        clampedEnd = true;
       }
+    }
+
+    if (startD.getTime() === prevStart && stopD.getTime() === prevStop) {
+      // Nothing moved, so the next attempt would re-send an identical request.
+      // Fail loudly with what Horizons actually said rather than spinning.
+      throw new Error(
+        `Horizons rejected ${command} for ${sentStart}..${sentStop} and the window `
+        + `did not move: ${lastError}`,
+      );
     }
     if (startD >= stopD) {
       throw new Error(`Horizons coverage for ${command} is empty after clamping`);
     }
   }
-  throw new Error(`Horizons: could not find a valid window for ${command}`);
+  throw new Error(`Horizons: could not find a valid window for ${command}: ${lastError}`);
 }
 
 /** Single current position. Uses a 2-day window and takes the first row. */
