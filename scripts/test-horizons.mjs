@@ -119,8 +119,59 @@ for (const c of cases) {
   }
 }
 
+// --- transient HTTP handling -----------------------------------------------
+// The first CI run died on a 503 from the Sun query 0.4s in, with no retry.
+const OK_BODY = '$$SOE\n2461284.5, A.D. 2026-Sep-01 00:00:00.0000, 1.0E+05, 2.0E+05, 3.0E+05,\n$$EOE';
+
+/** Replies with `statuses` in order, then 200s forever. Returns the call count. */
+function stubStatuses(statuses) {
+  const state = { requests: 0 };
+  globalThis.fetch = async () => {
+    const s = statuses[state.requests];
+    state.requests += 1;
+    if (s === undefined || s === 200) {
+      return { ok: true, status: 200, text: async () => OK_BODY };
+    }
+    if (s === 'throw') throw new Error('socket hang up');
+    return { ok: false, status: s, text: async () => '' };
+  };
+  return state;
+}
+
+const WIDE = { start: new Date('2026-09-01T00:00:00Z'), stop: new Date('2026-09-05T00:00:00Z') };
+
+const transient = [
+  { name: '503 then success — retried, not surfaced', statuses: [503], throws: false, requests: 2 },
+  { name: '429 then success — retried, not surfaced', statuses: [429], throws: false, requests: 2 },
+  { name: 'network throw then success — retried', statuses: ['throw'], throws: false, requests: 2 },
+  { name: '503 every time — gives up after 3', statuses: [503, 503, 503], throws: true, requests: 3 },
+  // A malformed request is not transient; retrying only hammers JPL.
+  { name: '400 — fails immediately, no retry', statuses: [400], throws: true, requests: 1 },
+];
+
+for (const c of transient) {
+  const state = stubStatuses(c.statuses);
+  let threw = false;
+  try {
+    await vectors('-170', WIDE);
+  } catch {
+    threw = true;
+  }
+  const bad = [];
+  if (threw !== c.throws) bad.push(`expected ${c.throws ? 'a throw' : 'success'}, got the opposite`);
+  if (state.requests !== c.requests) bad.push(`expected ${c.requests} request(s), made ${state.requests}`);
+  if (bad.length) {
+    failures += 1;
+    console.error(`✗ ${c.name}`);
+    for (const b of bad) console.error(`    ${b}`);
+  } else {
+    console.log(`✓ ${c.name}  (${state.requests} request${state.requests === 1 ? '' : 's'})`);
+  }
+}
+
+const total = cases.length + transient.length;
 if (failures) {
-  console.error(`\nFAIL — ${failures} of ${cases.length} cases`);
+  console.error(`\nFAIL — ${failures} of ${total} cases`);
   process.exit(1);
 }
-console.log(`\nPASS — ${cases.length} cases`);
+console.log(`\nPASS — ${total} cases`);

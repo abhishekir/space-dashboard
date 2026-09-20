@@ -87,11 +87,48 @@ function parseHorizonsDate(s) {
   ));
 }
 
-async function rawQuery(params) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * One Horizons request, retried on transient failure.
+ *
+ * Horizons is a busy public service and returns 503 under load; the first CI run
+ * of this project died on exactly that, on the Sun query, 0.4s in. A fetcher
+ * that gives up on the first 503 leaves the site serving yesterday's snapshot
+ * for the whole refresh interval, so transient statuses get a short backoff.
+ *
+ * 5xx and 429 are transient. Any other 4xx means the request itself is wrong —
+ * retrying just burns time and hammers JPL, so it fails immediately.
+ */
+async function rawQuery(params, { attempts = 3 } = {}) {
   const url = buildUrl(params);
-  const res = await fetch(url, { headers: { Accept: 'text/plain' } });
-  if (!res.ok) throw new Error(`Horizons HTTP ${res.status} for ${params.COMMAND}`);
-  return res.text();
+  let lastDetail = '';
+
+  for (let i = 0; i < attempts; i++) {
+    let res;
+    try {
+      res = await fetch(url, { headers: { Accept: 'text/plain' } });
+    } catch (err) {
+      // DNS failure, reset connection, TLS error: no response at all.
+      lastDetail = err.message;
+      if (i === attempts - 1) break;
+      await sleep(500 * 2 ** i);
+      continue;
+    }
+
+    if (res.ok) return res.text();
+
+    lastDetail = `HTTP ${res.status}`;
+    if (res.status < 500 && res.status !== 429) {
+      throw new Error(`Horizons HTTP ${res.status} for ${params.COMMAND}`);
+    }
+    if (i === attempts - 1) break;
+    await sleep(500 * 2 ** i);
+  }
+
+  throw new Error(
+    `Horizons unavailable for ${params.COMMAND} after ${attempts} attempts (${lastDetail})`,
+  );
 }
 
 /**
