@@ -6,10 +6,14 @@ then work from `CLAUDE.md`.
 The site is **built and rendering but has never been deployed, and the three data fetchers
 have never run against the live APIs.** That is the whole shape of the remaining work.
 
-**2026-09-20 update.** Task 1 was attempted from a sandbox whose egress policy blocks all four
-API hosts (403 on CONNECT), so the fetchers still have not touched the real APIs. They were
-instead run against a replay of the captured responses, which found the telescope fetcher
-**fatally broken** — see *Clamp bugs found and fixed* below. Tasks 2-4 are unchanged.
+**2026-09-20 update — task 1 is done.** All three fetchers have now run against the live APIs
+and every check in the task passes; see *Task 1 results* below. Getting there found the
+telescope fetcher **fatally broken** in two independent ways, neither reachable without
+executing it. Tasks 2-5 are unchanged, except that task 5's premise now actually holds.
+
+The sandbox could not reach the APIs (egress policy, 403 on CONNECT, `example.com` blocked
+too — it is a default-deny allowlist, nothing to do with these hosts). The fetchers were run on
+a GitHub Actions runner instead, via `workflow_dispatch`.
 
 ---
 
@@ -43,12 +47,12 @@ A complete, building, rendering dashboard:
 | Spaceflight News API response shape | **Verified live** | v4 sample |
 | Build | **Verified** | `npm run build` clean |
 | Rendering, all tabs, both breakpoints | **Verified** | `npm run shots` passes; screenshots reviewed |
-| Horizons clamp state machine | **Verified offline** | `npm run test:horizons`, 3 window scenarios |
-| `fetch-telescopes.mjs` executing | **Verified against replayed responses** | reproduces the seed's figures digit-for-digit |
-| **`fetch-telescopes.mjs` against live Horizons** | ❌ **never run** | egress policy blocks `ssd.jpl.nasa.gov` |
-| **`fetch-starship.mjs` executing** | ❌ **never run** | egress policy blocks both LL2 hosts |
-| **`fetch-news.mjs` executing** | ❌ **never run** | egress policy blocks `api.spaceflightnewsapi.net` |
-| **GitHub Actions workflow** | ❌ **never run** | not pushed yet |
+| Horizons clamp + transient retry | **Verified offline** | `npm run test:horizons`, 8 cases |
+| `fetch-telescopes.mjs` against live Horizons | **Verified live** | Actions run 2, 2026-09-20 23:17 UTC |
+| `fetch-starship.mjs` against live LL2 | **Verified live** | same run, production endpoint, no key |
+| `fetch-news.mjs` against live SNAPI | **Verified live** | same run, all three feeds populated |
+| JWST arc point count and loop closure | **Verified live** | 79 points, 92k km gap over a 2,686k km span |
+| **GitHub Actions workflow** | **Verified** | runs green end to end, deploy correctly skipped |
 | **Cloudflare deploy** | ❌ **never run** | project not created yet |
 
 The parsing logic was written against real captured responses and the field paths are
@@ -56,7 +60,7 @@ confirmed, so the risk is in **execution paths** — network handling, error bra
 coverage-window clamp retry — not in the shape of what gets parsed. That judgement was right:
 the clamp retry is exactly where the breakage was.
 
-### Clamp bugs found and fixed (2026-09-20)
+### Fetcher bugs found and fixed (2026-09-20)
 
 Replaying the real captured responses through `fetch-telescopes.mjs` surfaced three defects in
 `scripts/lib/horizons.mjs`, all on the retry path, none reachable without executing it:
@@ -77,42 +81,54 @@ Replaying the real captured responses through `fetch-telescopes.mjs` surfaced th
 
 Retries also went from 3 attempts to 4: Roman's real case needs exactly 3, which left no margin.
 
-`scripts/test-horizons.mjs` (`npm run test:horizons`, also a CI step) locks all three in. It
-fails against the pre-fix file, which is how each one was confirmed to be real.
+A fourth defect showed up the moment the fetchers first ran for real:
+
+4. **One transient 503 sank the whole telescope fetch.** The very first CI run died 0.4s in on
+   `Horizons HTTP 503 for 10`. `rawQuery` threw on any non-OK status, so a single 503 on any of
+   the six requests a refresh makes killed the run — and with `continue-on-error` the site would
+   have kept serving the previous snapshot with nothing going red. 5xx, 429 and connection
+   failures now get two retries with a 0.5s/1s backoff; other 4xx still fail immediately, since
+   a malformed request will not fix itself. The next run succeeded. Whether the retry fired or
+   Horizons had simply recovered is not distinguishable from the logs — but the exposure was
+   real either way, and it is now covered.
+
+`scripts/test-horizons.mjs` (`npm run test:horizons`, also a CI step) locks all four in across
+8 cases. It fails against the pre-fix file, which is how each one was confirmed to be real.
 
 ---
 
 ## Task queue, in order
 
-### 1. Run the three fetchers against the live APIs — still outstanding
-**Needs a machine with egress to the four API hosts.** Two attempts have now been made from
-sandboxes where policy blocks them; if the next session is in one too, do not burn time on it —
-push and let the GitHub Actions runner do it, which is task 2 anyway.
+### 1. Run the three fetchers — DONE (2026-09-20)
 
-```bash
-npm run fetch:telescopes
-LL2_DEV=1 npm run fetch:starship    # dev mirror: no rate limit, stale data
-npm run fetch:news
-```
-Then inspect each `public/data/*.json`. Specifically check:
-- `telescopes.json` — `bodies.roman.arcClamped` should be `true`, and `coverage.notAfter`
-  should name a date. **Both now hold under replay**, so a failure here means live Horizons
-  differs from the captured responses, not that the clamp is broken again.
-- `bodies.jwst.arc` should have ~78 points and trace a closed loop. **Unverified** — the seed
-  is a 10-day grid covering only Mar-Dec 2026, so replay yields 30 points and an open arc.
-  This check still needs live data.
-- `starship.json` — `next` should be a real upcoming flight. Re-run **without** `LL2_DEV=1`
-  once to confirm the production endpoint and rate-limit handling. Neither fetcher has been
-  executed in any form; unlike the telescope path they have no retry state machine, so the
-  exposure is network and error branches only.
-- `news.json` — the seed has empty feeds; all three should populate.
+All three ran green on a GitHub Actions runner at 23:17 UTC. Every check in the original task
+passes:
 
-Then `npm run build && npm run shots` to confirm real data renders as well as seed data.
+| check | expected | live result |
+|---|---|---|
+| `bodies.roman.arcClamped` | `true` | yes |
+| `bodies.roman.coverage.notAfter` | names a date | `2026-Oct-12 13:01:09` |
+| `bodies.jwst.arc` | ~78 points, closed loop | 79 points, first-to-last gap 92k km over a 2,686k km span |
+| `starship.json` `next` | a real upcoming flight | Starship Flight 14 / Starlink Group 31-1, 2026-09-28 12:15 UTC |
+| `news.json` | all three feeds populate | jwst 10 · roman 10 · starship 8 |
 
-One known cosmetic risk: `coverage.notAfter` is normalised to the seed's `2026-Oct-12 12:58:00`
-form by `tidy()` in `horizons.mjs`. If live Horizons words its error differently the regex
-falls through to `null` and the Roman note degrades to "see Horizons" — not a failure, but
-check the note reads correctly.
+Two things the old notes predicted, both confirmed: Roman's arc end **moved**, 12:58:00 →
+13:01:09, and `tidy()` in `horizons.mjs` parses the real Horizons error wording, which had only
+ever been tested against a replay.
+
+Live snapshot at that moment: JWST 1.2298M km from Earth (451k from L2), Roman 1.2497M km
+(563k from L2), L2 at 1.5027M km. Roman's arc is 42 points at a 1-day step.
+
+Starship ran against the **production** LL2 endpoint with no API key and succeeded, so the
+production path and its rate-limit handling are exercised. It took 11.5s versus 3s on the
+previous run — LL2 is slow from shared runner IPs and the 15 req/hr cap is shared across them,
+so `LL2_API_KEY` is still worth adding in task 2.
+
+Still not verified: `LL2_DEV=1` against the dev mirror. The production path is the one that
+matters and it works, so this is a convenience for local iteration, not a gap.
+
+**A fetcher failing does not fail the run** — `continue-on-error` is deliberate. Check the
+step summary, which now reports what each snapshot actually contains, not just step outcomes.
 
 ### 2. Deploy
 Follow `README.md` § Setup. Needs: a GitHub repo, `npx wrangler pages project create` as
@@ -121,8 +137,17 @@ Follow `README.md` § Setup. Needs: a GitHub repo, `npx wrangler pages project c
 
 ### 3. Watch the first scheduled run
 The workflow's per-step `continue-on-error` means a fetcher can fail without failing the
-deploy. Check the Actions step summary, which reports each fetcher's outcome. A site that
-deploys with stale data and no visible error is this architecture's main failure mode.
+deploy. A site that deploys with stale data and no visible error is this architecture's main
+failure mode, and step outcomes alone do not catch it — a fetcher can exit 0 having written a
+thinner payload than yesterday.
+
+`scripts/summarize-data.mjs` now reports what each snapshot actually contains into the step
+summary: arc point counts and spans, whether Roman's arc is end-clamped, the next Starship
+flight, article counts per feed, and each file's age. Seed data and the LL2 dev mirror are
+called out explicitly, because both look like a healthy fetch from the outside. It earned its
+place on the first run, flagging `⚠️ SEED DATA, fetcher did not run` when Horizons 503'd.
+
+So: read the snapshot table, not just the outcome list.
 
 ### 4. Add the post-deploy smoke test
 Append to `.github/workflows/deploy.yml` after the wrangler step:
@@ -178,7 +203,7 @@ Do not re-derive these; they cost real API calls to establish.
 | Horizons default reference plane | **Ecliptic of J2000.0** |
 | Horizons geocentric center | `500@399` |
 | Roman ephemeris starts | `2026-Aug-30 11:59:09 TDB` (33 min after liftoff) |
-| Roman arc ended (as of capture) | `2026-Oct-12 12:58` — **this moves**, expect it to have advanced |
+| Roman arc ended | `2026-Oct-12 13:01:09` as of 2026-09-20 23:17 UTC (was `12:58` at 08:00) — **this moves** |
 | JWST arc coverage | through `2031-Sep-06` |
 | Roman launch | 2026-08-30 11:26:04 UTC, Falcon Heavy, KSC LC-39A |
 | L2 ratio | `0.0100038` × Sun distance, anti-Sun direction |
