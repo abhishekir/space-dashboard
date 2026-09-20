@@ -77,6 +77,13 @@ jobs:
           echo "- starship:   ${{ steps.starship.outcome }}"   >> $GITHUB_STEP_SUMMARY
           echo "- news:       ${{ steps.news.outcome }}"       >> $GITHUB_STEP_SUMMARY
 
+      # Step outcomes only say a fetcher exited 0. This says what it wrote, so a
+      # snapshot that quietly stops advancing is visible in the run summary
+      # instead of shipping unnoticed.
+      - name: Report data snapshot
+        continue-on-error: true
+        run: node scripts/summarize-data.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Fail if every fetcher failed
         if: steps.telescopes.outcome == 'failure' && steps.starship.outcome == 'failure' && steps.news.outcome == 'failure'
         run: |
