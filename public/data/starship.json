@@ -1,0 +1,55 @@
+{
+  "generatedAt": "2026-09-20T08:00:00.000Z",
+  "seeded": true,
+  "seedNote": "Hand-seeded from spacex.com/launches/starship-flight-14 and nextspaceflight on 2026-09-20 so the tab renders before the first CI run. `npm run fetch:starship` replaces this with live Launch Library 2 data.",
+  "source": "https://ll.thespacedevs.com/2.3.0",
+  "stale": false,
+  "next": {
+    "id": "seed-flight-14",
+    "name": "Starship Flight 14",
+    "net": "2026-09-28T12:15:00Z",
+    "netPrecision": "Hour",
+    "windowStart": "2026-09-28T12:15:00Z",
+    "windowEnd": "2026-09-28T13:30:00Z",
+    "status": {
+      "name": "Go for Launch",
+      "abbrev": "Go",
+      "description": "Awaiting regulatory approval. Current target is NET September 28, 2026."
+    },
+    "rocket": "Starship-Super Heavy v3 (Booster 21 / Ship 41)",
+    "pad": {
+      "name": "Pad 2",
+      "location": "Starbase, Texas",
+      "latitude": 25.9972,
+      "longitude": -97.1564
+    },
+    "mission": {
+      "name": "Starlink Group 31-1",
+      "description": "The first orbital flight of the Starship system and its first operational Starlink deployment. Objectives: nominal ascent, boostback and offshore booster landing burn in the Gulf; orbital insertion; deployment of 26 Starlink V3 satellites; an ~8 hour coast; deorbit burn; and a controlled entry and splashdown in the Pacific. Also the first re-flight of thermal protection tiles, using two tiles previously flown on Ship 40.",
+      "type": "Communications / Test Flight",
+      "orbit": "Low Earth Orbit"
+    },
+    "image": null,
+    "webcast": null,
+    "failreason": null
+  },
+  "upcoming": [],
+  "previous": [],
+  "outcomes": { "success": 0, "failure": 0, "other": 0 },
+  "profile": [
+    { "t": -3000, "label": "Booster engine startup" },
+    { "t": 0, "label": "Liftoff" },
+    { "t": 58, "label": "Max Q" },
+    { "t": 140, "label": "Super Heavy MECO" },
+    { "t": 491, "label": "Starship engine cutoff" },
+    { "t": 1528, "label": "Orbital insertion burn start" },
+    { "t": 1547, "label": "Orbital insertion burn shutdown" },
+    { "t": 2058, "label": "Payload deploy start" },
+    { "t": 3890, "label": "Payload deploy complete" },
+    { "t": 31938, "label": "Deorbit burn start" },
+    { "t": 34132, "label": "Entry interface" },
+    { "t": 35250, "label": "Transonic" },
+    { "t": 35411, "label": "Landing burn start" },
+    { "t": 35430, "label": "Splashdown" }
+  ]
+}

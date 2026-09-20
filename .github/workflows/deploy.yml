@@ -1,0 +1,87 @@
+name: Refresh data and deploy
+
+# THE KEY ARCHITECTURAL POINT
+# ---------------------------
+# Cloudflare Pages' free plan allows 500 *Cloudflare-run Git builds* per month.
+# Refreshing every 30 minutes would be ~1,440 — far over.
+#
+# So this project does NOT connect the Pages project to Git. Instead this
+# workflow does the build itself and pushes the finished `dist/` up with
+# `wrangler pages deploy` (a Direct Upload). Cloudflare's build system is never
+# invoked, so the 500-build quota is never touched.
+#
+# Create the Pages project once as a Direct Upload project:
+#   npx wrangler pages project create space-dashboard --production-branch main
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub's scheduler is best-effort and can lag by several
+    # minutes under load; that is fine for orbital data that moves slowly.
+    # Dial this to '0 * * * *' for hourly if you want fewer deploys.
+    - cron: '*/30 * * * *'
+  push:
+    branches: [main]
+  workflow_dispatch: # manual "Run workflow" button
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Each fetcher is allowed to fail without sinking the deploy: if Horizons
+      # is down we still want the site up with the last-good seeded data rather
+      # than no site at all. `continue-on-error` + a summary step makes a partial
+      # failure loud in the Actions UI instead of silent.
+      - name: Fetch telescope ephemerides (JPL Horizons)
+        id: telescopes
+        continue-on-error: true
+        run: npm run fetch:telescopes
+
+      - name: Fetch Starship launches (Launch Library 2)
+        id: starship
+        continue-on-error: true
+        env:
+          # Optional. Unauthenticated is 15 req/hr per IP; this job uses 2.
+          # GitHub runners share IPs, so a key is worth adding if you see 429s.
+          LL2_API_KEY: ${{ secrets.LL2_API_KEY }}
+        run: npm run fetch:starship
+
+      - name: Fetch news (Spaceflight News API)
+        id: news
+        continue-on-error: true
+        run: npm run fetch:news
+
+      - name: Report fetch outcomes
+        run: |
+          echo "### Data refresh" >> $GITHUB_STEP_SUMMARY
+          echo "- telescopes: ${{ steps.telescopes.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- starship:   ${{ steps.starship.outcome }}"   >> $GITHUB_STEP_SUMMARY
+          echo "- news:       ${{ steps.news.outcome }}"       >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if every fetcher failed
+        if: steps.telescopes.outcome == 'failure' && steps.starship.outcome == 'failure' && steps.news.outcome == 'failure'
+        run: |
+          echo "All three fetchers failed — likely a network or upstream outage."
+          exit 1
+
+      - run: npm run build
+
+      - name: Deploy to Cloudflare Pages (Direct Upload)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=space-dashboard --branch=main

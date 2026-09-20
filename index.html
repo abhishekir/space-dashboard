@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Deep Field — Live Space Program Dashboard</title>
+<meta name="description" content="Live 3D tracking of the James Webb and Nancy Grace Roman space telescopes and SpaceX Starship, built on JPL Horizons and Launch Library 2 data." />
+<meta name="color-scheme" content="dark" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23ffb347'/%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%234fd1c5' stroke-width='1.5' opacity='.7'/%3E%3C/svg%3E" />
+</head>
+<body>
+
+<div id="viewport">
+  <canvas id="stage-l2"></canvas>
+  <canvas id="stage-starship" hidden></canvas>
+  <div id="vignette" aria-hidden="true"></div>
+</div>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>Deep Field</h1>
+      <p class="brand-sub">Live space program telemetry</p>
+    </div>
+  </div>
+
+  <nav id="tabs" role="tablist" aria-label="Space programs">
+    <button role="tab" id="tab-jwst"     aria-controls="panel-jwst"     data-tab="jwst"     class="tab is-active" aria-selected="true">
+      <span class="tab-dot" style="--dot:#ffb347"></span>James Webb
+    </button>
+    <button role="tab" id="tab-roman"    aria-controls="panel-roman"    data-tab="roman"    class="tab" aria-selected="false">
+      <span class="tab-dot" style="--dot:#4fd1c5"></span>Roman
+    </button>
+    <button role="tab" id="tab-starship" aria-controls="panel-starship" data-tab="starship" class="tab" aria-selected="false">
+      <span class="tab-dot" style="--dot:#ff8c42"></span>Starship
+    </button>
+  </nav>
+
+  <div id="freshness" class="freshness" title="When the underlying data snapshot was generated">
+    <span class="pulse" aria-hidden="true"></span>
+    <span id="freshness-text">loading…</span>
+  </div>
+</header>
+
+<main id="panels">
+
+  <!-- ============================ JWST ============================ -->
+  <section id="panel-jwst" role="tabpanel" aria-labelledby="tab-jwst" class="panel is-active" style="--accent:#ffb347;--accent-dim:#6b4a1c">
+    <div class="panel-inner">
+
+      <div class="hero">
+        <p class="eyebrow">Operational · Sun–Earth L2 halo orbit</p>
+        <h2>James Webb Space Telescope</h2>
+        <p class="lede">A 6.5-metre infrared observatory operating a million miles from Earth, held in a wide halo orbit around the second Lagrange point so its sunshield can keep the mirror at around 40 K.</p>
+      </div>
+
+      <div class="card" data-section="location">
+        <h3>Current location</h3>
+        <div class="stat-grid" id="jwst-stats"></div>
+        <p class="note" id="jwst-location-note"></p>
+      </div>
+
+      <div class="card" data-section="mission">
+        <h3>Current mission</h3>
+        <dl class="kv" id="jwst-mission"></dl>
+      </div>
+
+      <div class="card" data-section="data">
+        <h3>Latest data &amp; findings</h3>
+        <div class="feed" id="jwst-feed"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================ ROMAN ============================ -->
+  <section id="panel-roman" role="tabpanel" aria-labelledby="tab-roman" class="panel" style="--accent:#4fd1c5;--accent-dim:#1c5c56" hidden>
+    <div class="panel-inner">
+
+      <div class="hero">
+        <p class="eyebrow" id="roman-phase">In cruise · en route to L2</p>
+        <h2>Nancy Grace Roman Space Telescope</h2>
+        <p class="lede">NASA's wide-field infrared observatory, launched 30 August 2026 on a Falcon Heavy. Same 2.4-metre aperture as Hubble, but a field of view roughly 100× larger — built to survey dark energy, dark matter and exoplanets.</p>
+      </div>
+
+      <div class="card" data-section="location">
+        <h3>Current location</h3>
+        <div class="cruise" id="roman-cruise"></div>
+        <div class="stat-grid" id="roman-stats"></div>
+        <p class="note" id="roman-location-note"></p>
+      </div>
+
+      <div class="card" data-section="mission">
+        <h3>Current mission</h3>
+        <dl class="kv" id="roman-mission"></dl>
+      </div>
+
+      <div class="card" data-section="data">
+        <h3>Latest data &amp; findings</h3>
+        <div class="feed" id="roman-feed"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================ STARSHIP ============================ -->
+  <section id="panel-starship" role="tabpanel" aria-labelledby="tab-starship" class="panel" style="--accent:#ff8c42;--accent-dim:#6b3418" hidden>
+    <div class="panel-inner">
+
+      <div class="hero">
+        <p class="eyebrow" id="starship-status">Next flight</p>
+        <h2>SpaceX Starship</h2>
+        <p class="lede">The fully reusable Super Heavy / Starship system, flying from Starbase, Texas. Flight 14 is the programme's first orbital attempt and first operational Starlink deployment.</p>
+      </div>
+
+      <div class="card" data-section="countdown">
+        <h3>Next launch</h3>
+        <div id="starship-countdown" class="countdown"></div>
+        <div class="stat-grid" id="starship-stats"></div>
+      </div>
+
+      <div class="card" data-section="mission">
+        <h3>Current mission</h3>
+        <dl class="kv" id="starship-mission"></dl>
+        <p class="mission-desc" id="starship-desc"></p>
+      </div>
+
+      <div class="card" data-section="view">
+        <h3>3D view</h3>
+        <div class="segmented" role="group" aria-label="Starship 3D view mode">
+          <button class="seg is-active" data-mode="vehicle">Vehicle</button>
+          <button class="seg" data-mode="profile">Flight profile</button>
+        </div>
+        <p class="note" id="starship-view-note">The stack, drawn to published v3 proportions: 124.4 m tall, 9 m diameter.</p>
+      </div>
+
+      <div class="card" data-section="profile">
+        <h3>Flight profile</h3>
+        <ol class="timeline" id="starship-timeline"></ol>
+      </div>
+
+      <div class="card" data-section="data">
+        <h3>Latest updates</h3>
+        <div class="feed" id="starship-feed"></div>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<footer id="legal">
+  <p>
+    Positions from <a href="https://ssd.jpl.nasa.gov/horizons/" target="_blank" rel="noopener">JPL Horizons</a> ·
+    launches from <a href="https://thespacedevs.com/llapi" target="_blank" rel="noopener">Launch Library 2</a> ·
+    news from <a href="https://spaceflightnewsapi.net/" target="_blank" rel="noopener">Spaceflight News API</a>.
+    Not affiliated with NASA, ESA, CSA, STScI or SpaceX.
+  </p>
+</footer>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-09-20T08:00:00.000Z",
+  "seeded": true,
+  "seedNote": "Placeholder so the panels render on first clone. `npm run fetch:news` replaces this with the live Spaceflight News API feed.",
+  "source": "https://api.spaceflightnewsapi.net/v4",
+  "feeds": {
+    "jwst": [],
+    "roman": [],
+    "starship": []
+  }
+}
