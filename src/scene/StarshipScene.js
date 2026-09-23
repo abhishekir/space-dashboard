@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  createStarfield, createEarth, createGlowSprite, createLabel,
+  createStarfield, createEarth, createGlowSprite, createLabel, renderLabels,
   makeThickLine, gradientColors, createComposer, createSpaceEnvironment, frameObjects,
 } from './common.js';
 
@@ -170,6 +170,15 @@ function buildStack() {
   return g;
 }
 
+/**
+ * Bloom threshold per mode, on linear luminance. The vehicle value was tuned for
+ * the metal stack, whose highlights are narrow. A sunlit globe filling the frame
+ * sits almost entirely above it, so in profile mode the whole disc bloomed into
+ * a white haze that buried the ground track. There, only the genuinely hot
+ * things — ice glare, the launch pin, the tracer — should glow.
+ */
+const BLOOM_THRESHOLD = { vehicle: 0.22, profile: 0.6 };
+
 export class StarshipScene {
   constructor(canvas) {
     this.canvas = canvas;
@@ -223,7 +232,9 @@ export class StarshipScene {
     this.globe.add(this.earth);
     this.scene.add(this.globe);
 
-    this.composer = createComposer(this.renderer, this.scene, this.camera, { strength: 0.6, threshold: 0.22 });
+    this.composer = createComposer(this.renderer, this.scene, this.camera, {
+      strength: 0.6, threshold: BLOOM_THRESHOLD.vehicle,
+    });
     this._lineMaterials = [];
     this._labels = [];
 
@@ -285,6 +296,7 @@ export class StarshipScene {
     const vehicle = mode === 'vehicle';
     this.stack.visible = vehicle;
     this.globe.visible = !vehicle;
+    this.composer.userData.bloom.threshold = vehicle ? BLOOM_THRESHOLD.vehicle : BLOOM_THRESHOLD.profile;
 
     const el = this.canvas.parentElement ?? this.canvas;
     const w = Math.max(1, el.clientWidth);
@@ -356,6 +368,7 @@ export class StarshipScene {
 
     this.controls.update();
     this.composer.render();
+    renderLabels(this.renderer, this.scene, this.camera);
   }
 
   dispose() {

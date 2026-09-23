@@ -96,6 +96,17 @@ Do not undo these without a deliberate reason. Each exists because the alternati
   subject slides out of frame — this is why the halo orbit kept getting clipped.
 - `setViewOffset` is in **pixels**, so it must be rebuilt on every resize and cleared below the
   900px breakpoint.
+- **Colour literals in GLSL are not colour-managed.** `THREE.Color` uniforms are converted from
+  sRGB to linear; `vec3(...)` literals in a `ShaderMaterial` are not, and `OutputPass` re-encodes
+  everything as if linear. Literals picked by eye come out pastel. Wrap them in `lin()` (see
+  `createEarth`).
+- **`BackSide` shells see only faces pointing away from the camera**, so `dot(normal, view)` is
+  always ≤ 0 and a front-face Fresnel term is stuck at a constant. The atmosphere rendered as a
+  flat hard ring for this reason, hidden while heavy bloom smeared it.
+- **Bloom blurs the finished frame**, so nothing drawn inside the composer can sit cleanly on
+  top of a bright line. Labels are on `LABEL_LAYER` and drawn after it by `renderLabels()`.
+  Bloom thresholds are per scene and, in the Starship scene, per mode — a globe filling the
+  frame is almost all above the vehicle's 0.22.
 
 **CSS**
 - `#tabs` carries `flex: 1` (flex-basis `0%`) in the base rule, which beats `width: 100%` in the
@@ -115,7 +126,7 @@ Do not undo these without a deliberate reason. Each exists because the alternati
 
 Run `npm run build && npm run shots` before calling any visual or layout change done. It fails
 non-zero on page errors, console errors, a tab that renders no stat tiles, a missing WebGL
-context, or horizontal overflow at 414px. It has caught every real bug in this project so far,
+context, horizontal overflow at 414px, or the fixed footer covering a panel card. It has caught every real bug in this project so far,
 including two that were invisible on screen.
 
 For data-layer changes, run the actual fetcher (`npm run fetch:telescopes`, etc.) and inspect

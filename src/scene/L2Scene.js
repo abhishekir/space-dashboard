@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  createStarfield, createEarth, createGlowSprite, createLabel,
+  createStarfield, createEarth, createGlowSprite, createLabel, renderLabels,
   createWebbMarker, createRomanMarker, makeThickLine, gradientColors, createComposer,
   createSpaceEnvironment, frameObjects,
 } from './common.js';
@@ -327,6 +327,7 @@ export class L2Scene {
 
     this.controls.update();
     this.composer.render();
+    renderLabels(this.renderer, this.scene, this.camera);
   }
 
   dispose() {

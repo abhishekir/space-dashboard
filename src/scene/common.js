@@ -127,6 +127,13 @@ export function createEarth(radius = 1) {
 
         // Cheap value noise — enough to suggest landmasses without pretending
         // to be cartography.
+        // The palette below is written in sRGB, as picked by eye. THREE.Color
+        // uniforms (uOcean, uNight) are converted to linear by three's colour
+        // management, but GLSL literals are not — and the composer's OutputPass
+        // treats everything as linear and re-encodes it, which lifted these
+        // literals into pastel: dark forest came out mint, shelf water pale blue.
+        vec3 lin(vec3 c){ return pow(c, vec3(2.2)); }
+
         float hash(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
         float noise(vec3 p){
           vec3 i = floor(p), f = fract(p);
@@ -168,9 +175,10 @@ export function createEarth(radius = 1) {
           ground = mix(ground, tundra, smoothstep(0.52, 0.76, lat));
           // Mountains catch a little more light
           ground += vec3(0.10) * smoothstep(0.60, 0.70, elev);
+          ground = lin(ground);
 
           // Ocean deepens away from the shelf
-          vec3 shelf = vec3(0.07, 0.24, 0.42);
+          vec3 shelf = lin(vec3(0.07, 0.24, 0.42));
           vec3 deep  = uOcean * 0.62;
           vec3 sea = mix(deep, shelf, smoothstep(0.40, 0.495, elev));
 
@@ -178,7 +186,7 @@ export function createEarth(radius = 1) {
 
           // Polar ice, following the land/sea line loosely
           float ice = smoothstep(0.80, 0.955, lat + detail * 0.05);
-          albedo = mix(albedo, vec3(0.86, 0.90, 0.95), ice);
+          albedo = mix(albedo, lin(vec3(0.86, 0.90, 0.95)), ice);
 
           vec3 sd = normalize(uSunDir);
           float lambert = dot(n, sd);
@@ -190,7 +198,7 @@ export function createEarth(radius = 1) {
           // Specular glint off water only — sells it as an ocean, not paint.
           vec3 viewDir = normalize(cameraPosition - vWorldPos);
           float spec = pow(max(dot(reflect(-sd, n), viewDir), 0.0), 34.0);
-          col += vec3(0.55, 0.68, 0.85) * spec * (1.0 - land) * day * 0.55;
+          col += lin(vec3(0.55, 0.68, 0.85)) * spec * (1.0 - land) * day * 0.55;
 
           gl_FragColor = vec4(col, 1.0);
         }`,
@@ -199,10 +207,19 @@ export function createEarth(radius = 1) {
   group.add(globe);
 
   // Atmospheric rim, additive, rendered from the back so it haloes the limb.
+  const ATMO_SCALE = 1.22;
+  // Where the view ray grazes the planet's limb, it meets the shell's back face
+  // at this cosine to the shell normal. It is the brightest point of the halo;
+  // the shell's own silhouette (cosine 0) is where the halo fades out.
+  const limbFacing = Math.sqrt(1 - 1 / (ATMO_SCALE * ATMO_SCALE));
   const atmo = new THREE.Mesh(
-    new THREE.SphereGeometry(radius * 1.22, 64, 64),
+    new THREE.SphereGeometry(radius * ATMO_SCALE, 64, 64),
     new THREE.ShaderMaterial({
-      uniforms: { uSunDir: { value: new THREE.Vector3(1, 0, 0) }, uColor: { value: new THREE.Color(0x4aa8ff) } },
+      uniforms: {
+        uSunDir: { value: new THREE.Vector3(1, 0, 0) },
+        uColor: { value: new THREE.Color(0x4aa8ff) },
+        uLimbFacing: { value: limbFacing },
+      },
       vertexShader: /* glsl */ `
         varying vec3 vNormalW; varying vec3 vViewDir;
         void main() {
@@ -212,12 +229,19 @@ export function createEarth(radius = 1) {
           gl_Position = projectionMatrix * viewMatrix * wp;
         }`,
       fragmentShader: /* glsl */ `
-        uniform vec3 uColor; uniform vec3 uSunDir;
+        uniform vec3 uColor; uniform vec3 uSunDir; uniform float uLimbFacing;
         varying vec3 vNormalW; varying vec3 vViewDir;
         void main() {
-          float fres = pow(1.0 - max(dot(vNormalW, vViewDir), 0.0), 3.2);
-          float lit = smoothstep(-0.45, 0.5, dot(normalize(vNormalW), normalize(uSunDir)));
-          gl_FragColor = vec4(uColor, fres * lit * 0.95);
+          // BackSide: every visible fragment is a face pointing AWAY from the
+          // camera, so dot(normal, view) is always <= 0. A front-face Fresnel
+          // term, max(dot, 0), is therefore stuck at 0 and the shell rendered
+          // as a flat, hard-edged ring — hidden only while heavy bloom smeared
+          // it. Flip the normal and ramp from the shell edge in to the limb.
+          vec3 n = normalize(vNormalW);
+          float facing = max(dot(-n, normalize(vViewDir)), 0.0);
+          float halo = pow(clamp(facing / uLimbFacing, 0.0, 1.0), 2.4);
+          float lit = smoothstep(-0.45, 0.5, dot(n, normalize(uSunDir)));
+          gl_FragColor = vec4(uColor, halo * lit * 0.95);
         }`,
       transparent: true,
       blending: THREE.AdditiveBlending,
@@ -268,27 +292,86 @@ export function createLabel(text, { color = '#e8ecff', size = 44, pad = 12 } = {
   const ctx = c.getContext('2d');
   const font = `600 ${size}px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif`;
   ctx.font = font;
-  const w = Math.ceil(ctx.measureText(text).width) + pad * 2;
   const h = size + pad * 2;
+  // Extra horizontal room so the pill's rounded caps clear the first and last
+  // glyphs instead of crowding them.
+  const padX = pad + h / 4;
+  const w = Math.ceil(ctx.measureText(text).width) + padX * 2;
   c.width = w; c.height = h;
 
   const ctx2 = c.getContext('2d');
+
+  // Backing pill. Labels already draw last with depth testing off, but bare
+  // text over a trail the same colour still reads as a collision: JWST's halo
+  // arc ran straight through its own tag, and Roman's cut its final letter.
+  // Nudging the tag sideways only works from one camera angle, and these views
+  // orbit, so the tag carries its own backdrop instead. Drawn by hand rather
+  // than with roundRect() so older Safari still gets it.
+  const r = h / 2;
+  ctx2.beginPath();
+  ctx2.moveTo(r, 0);
+  ctx2.lineTo(w - r, 0);
+  ctx2.arc(w - r, r, r, -Math.PI / 2, Math.PI / 2);
+  ctx2.lineTo(r, h);
+  ctx2.arc(r, r, r, Math.PI / 2, Math.PI * 1.5);
+  ctx2.closePath();
+  // Near-opaque on purpose: trails are HDR-bright and then bloomed, so even a
+  // 28% show-through (0.72) left JWST's arc plainly visible across its tag.
+  ctx2.fillStyle = 'rgba(5, 7, 15, 0.92)';
+  ctx2.fill();
+  ctx2.globalAlpha = 0.35;
+  ctx2.strokeStyle = color;
+  ctx2.lineWidth = 2;
+  ctx2.stroke();
+  ctx2.globalAlpha = 1;
+
   ctx2.font = font;
   ctx2.textBaseline = 'middle';
   ctx2.shadowColor = 'rgba(0,0,0,0.9)';
   ctx2.shadowBlur = 10;
   ctx2.fillStyle = color;
-  ctx2.fillText(text, pad, h / 2);
+  ctx2.fillText(text, padX, h / 2);
 
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.minFilter = THREE.LinearFilter;
   const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }),
+    new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthWrite: false, depthTest: false,
+      // Drawn straight to the screen after the composer (see renderLabels), so
+      // there is no OutputPass to tone-map them — and they are already LDR.
+      toneMapped: false,
+    }),
   );
   sprite.userData.aspect = w / h;
   sprite.renderOrder = 10;
+  sprite.layers.set(LABEL_LAYER);
   return sprite;
+}
+
+/**
+ * Labels live on their own layer so the composer's RenderPass never sees them.
+ * Bloom blurs the finished frame, so a bright trail passing just outside a tag
+ * glowed straight across its text however opaque the tag's backdrop was —
+ * JWST's halo arc still crossed its own label. Drawing labels after bloom is
+ * the only order in which the backdrop actually wins.
+ */
+export const LABEL_LAYER = 1;
+
+/** Draw the label layer over whatever the composer has already put on screen. */
+export function renderLabels(renderer, scene, camera) {
+  const mask = camera.layers.mask;
+  const background = scene.background;
+  const autoClear = renderer.autoClear;
+  // A texture background is drawn even with autoClear off; don't repaint the sky.
+  scene.background = null;
+  renderer.autoClear = false;
+  renderer.setRenderTarget(null);
+  camera.layers.set(LABEL_LAYER);
+  renderer.render(scene, camera);
+  camera.layers.mask = mask;
+  renderer.autoClear = autoClear;
+  scene.background = background;
 }
 
 /**
