@@ -175,7 +175,7 @@ a:hover { text-decoration: underline; }
   width: var(--panel-w);
   max-width: calc(100vw - 32px);
   margin-left: 22px;
-  padding: calc(var(--topbar-h) + 20px) 0 90px;
+  padding: calc(var(--topbar-h) + 20px) 0 28px;
   display: flex;
   flex-direction: column;
   gap: 13px;
@@ -501,7 +501,12 @@ a:hover { text-decoration: underline; }
 
 #legal {
   position: fixed;
-  bottom: 0; left: 0; right: 0;
+  /* Starts beside the panel, not under it. The panel is its own scroll box
+     running to the bottom of the viewport, so a full-width fixed footer sat
+     on top of whichever card landed there — the JWST launch row, Starship's
+     mission description — and bottom padding only cleared it once scrolled
+     to the very end. Over the canvas it covers nothing that matters. */
+  bottom: 0; left: calc(var(--panel-w) + 44px); right: 0;
   z-index: 25;
   padding: 9px 22px;
   background: linear-gradient(0deg, rgba(5, 7, 15, 0.9), transparent);

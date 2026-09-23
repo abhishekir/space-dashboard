@@ -160,6 +160,22 @@ async function main() {
     await page.waitForTimeout(2500);
     await page.screenshot({ path: join(OUT, `${tab.id}.png`) });
     console.log(`  ✓ ${tab.id}.png`);
+
+    // The fixed footer once sat on top of whichever card reached the bottom of
+    // the viewport. Invisible to every other check here, obvious to a reader.
+    const covered = await page.evaluate(() => {
+      const legal = document.getElementById('legal')?.getBoundingClientRect();
+      if (!legal) return [];
+      const hits = [];
+      for (const card of document.querySelectorAll('.panel.is-active .card')) {
+        const r = card.getBoundingClientRect();
+        const h = Math.min(r.bottom, legal.bottom, innerHeight) - Math.max(r.top, legal.top);
+        const w = Math.min(r.right, legal.right) - Math.max(r.left, legal.left);
+        if (h > 1 && w > 1) hits.push(card.querySelector('h3')?.textContent.trim() ?? 'a card');
+      }
+      return hits;
+    });
+    if (covered.length) failures.push(`${tab.id}: footer overlaps ${covered.join(', ')}`);
   }
 
   // Starship has a second 3D mode worth capturing.
